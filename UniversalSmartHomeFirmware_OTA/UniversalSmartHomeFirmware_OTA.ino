@@ -19,15 +19,21 @@ const char* password = STAPSK;
 const uint8_t pinD1 = D1;
 const uint8_t pinD2 = D2;
 
-int temperaturePin = D3;
+int temperaturePin = D4;
 DHT myDHT(temperaturePin, DHT11);
 int tempInterval = 0;
 String tempAttId;
 
-int doorPin;
-unsigned int prevMillis;
+String doorState = "closed";
+int doorPin = D3;
+int doorInterval = 0;
+String doorAttId;
 
-String mac = "ESP-" + WiFi.macAddress();
+unsigned int prevTempMillis;
+unsigned int prevDoorMillis;
+
+String mac = WiFi.macAddress();
+String mqttUsername = "ESP-" + mac;
 
 EspMQTTClient client(
   "Yolo",
@@ -35,7 +41,7 @@ EspMQTTClient client(
   "192.168.1.100",  // MQTT Broker server ip
   "MQTTUsername",   // Can be omitted if not needed
   "MQTTPassword",   // Can be omitted if not needed
-  mac.c_str(),     // Client name that uniquely identify your device
+  mqttUsername.c_str(),     // Client name that uniquely identify your device
   1883              // The MQTT port, default to 1883. this line can be omitted
 );
 
@@ -119,12 +125,13 @@ void onConnectionEstablished()
     }
 
     if (attachmentType == "door-sensor") {
-      doorPin = pinNumber;
+      doorInterval = doc["doorInterval"];
+      doorAttId = attachmentId;
     }
 
   });
 
-  client.publish("global/isOnlineReport", "{\"macAddress\": \"" + WiFi.macAddress() + "\"}");
+  client.publish("global/deviceState", "{\"macAddress\": \"" + WiFi.macAddress() + "\",\"state\":\"online\"}");
 }
 
 void setupOTA() {
@@ -190,6 +197,8 @@ void setupOTA() {
 void setup() {
   pinMode(D1, OUTPUT);
   pinMode(D2, OUTPUT);
+  pinMode(D3, INPUT_PULLUP);
+  pinMode(D4, INPUT_PULLUP);
 
   myDHT.begin();
 
@@ -198,6 +207,8 @@ void setup() {
   setupOTA();
 
   client.enableDebuggingMessages();
+  String lastWill = "{\"macAddress\": \"" + mac + "\",\"state\":\"offline\"}";
+  client.enableLastWillMessage("global/deviceState", lastWill.c_str(), true);
 
   pinMode(LED_BUILTIN, OUTPUT);
   for (int i = 0; i < 10; i++) {
@@ -205,7 +216,7 @@ void setup() {
     delay(100);
   }
 
-  prevMillis = millis();
+  prevTempMillis = prevDoorMillis = millis();
 }
 
 void loop() {
@@ -214,8 +225,8 @@ void loop() {
 
   unsigned int currentMillis = millis();
 
-  if (tempInterval != 0) {
-    if (currentMillis - prevMillis > tempInterval) {
+  if (tempInterval != 0 && tempAttId != NULL) {
+    if (currentMillis - prevTempMillis > tempInterval) {
       StaticJsonDocument<512> doc;
       float temp = myDHT.readTemperature();
       float hum = myDHT.readHumidity();
@@ -233,7 +244,15 @@ void loop() {
         serializeJson(doc, message);
         client.publish("global/temperature", message);
       }
-      prevMillis = currentMillis;
+      prevTempMillis = currentMillis;
+    }
+  }
+  if (doorInterval != 0 && doorAttId != NULL) {
+    if (currentMillis - prevDoorMillis > doorInterval) {
+      if (digitalRead(doorPin) == LOW) doorState = "open";
+      else doorState = "closed";
+      client.publish("global/door", "{\"attachmentId\":\"" + doorAttId + "\",\"state\":\"" + doorState + "\"}");
+      prevDoorMillis = currentMillis;
     }
   }
 }
