@@ -93,6 +93,8 @@ void onConnectionEstablished()
 
 
     if (attachmentType == "light") {
+      pinMode(PINS[pin], OUTPUT);
+      digitalWrite(PINS[pin], LOW);
       client.subscribe("lights/" + deviceId + "/" + pin, [pin](const String & topic, const String & payload) {
         if (payload == "on") turnOnLight(pin);
         if (payload == "off") turnOffLight(pin);
@@ -100,6 +102,8 @@ void onConnectionEstablished()
     }
 
     if (attachmentType == "socket") {
+      pinMode(PINS[pin], OUTPUT);
+      digitalWrite(PINS[pin], LOW);
       client.subscribe("sockets/" + deviceId + "/" + pin, [pin](const String & topic, const String & payload) {
         if (payload == "on") turnOnSocket(pin);
         if (payload == "off") turnOffSocket(pin);
@@ -109,16 +113,24 @@ void onConnectionEstablished()
     if (attachmentType == "temperature-sensor") {
       tempInterval = doc["tempInterval"];
       tempAttId = attachmentId;
+      pinMode(PINS["D4"], INPUT_PULLUP);
     }
 
     if (attachmentType == "door-sensor") {
       doorInterval = doc["doorInterval"];
       doorAttId = attachmentId;
+      pinMode(PINS["D3"], INPUT_PULLUP);
     }
 
   });
 
-  client.publish("global/deviceState", "{\"macAddress\": \"" + WiFi.macAddress() + "\",\"ipAddress\":\"" + WiFi.localIP().toString() + "\",\"state\":\"online\"}", true);
+  String isOnlineMessage = "{\"macAddress\": \"" + WiFi.macAddress() + "\",\"ipAddress\":\"" + WiFi.localIP().toString() + "\",\"isOnline\":true}";
+
+  client.subscribe("global/reportOnlineState", [isOnlineMessage](const String & topic, const String & payload) {
+    client.publish("global/deviceState", isOnlineMessage, true);
+  });
+
+  client.publish("global/deviceState", isOnlineMessage, true);
 }
 
 void setupOTA() {
@@ -183,18 +195,8 @@ void setupOTA() {
 void setup() {
   PINS["D1"] = D1;
   PINS["D2"] = D2;
-  //  PINS["D3"] = D3;
-  //  PINS["D4"] = D4;
-
-  pinMode(D1, OUTPUT);
-  pinMode(D2, OUTPUT);
-  pinMode(D3, INPUT_PULLUP);
-  pinMode(D4, INPUT_PULLUP);
-
-  digitalWrite(D1, LOW);
-  digitalWrite(D2, LOW);
-  //  digitalWrite(D3, LOW);
-  //  digitalWrite(D4, LOW);
+  PINS["D3"] = D3;
+  PINS["D4"] = D4;
 
   myDHT.begin();
 
@@ -202,22 +204,23 @@ void setup() {
   Serial.println("Booting");
 
   client.enableDebuggingMessages();
-  
+
   // Last will
   char message[100];
   StaticJsonDocument<128> doc;
   doc["macAddress"] = mac;
-  doc["state"] = "offline";
+  doc["isOnline"] = false;
   serializeJson(doc, message);
   client.enableLastWillMessage("global/deviceState", message, true);
 
   setupOTA();
 
   pinMode(LED_BUILTIN, OUTPUT);
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i <= 10; i++) {
     digitalWrite(LED_BUILTIN, i % 2);
     delay(100);
   }
+  digitalWrite(LED_BUILTIN, LOW);
 
   prevTempMillis = prevDoorMillis = millis();
   Serial.println("All systems GO");
