@@ -16,8 +16,7 @@
 const char* ssid = STASSID;
 const char* password = STAPSK;
 
-const uint8_t pinD1 = D1;
-const uint8_t pinD2 = D2;
+StaticJsonDocument<512> PINS;
 
 int temperaturePin = D4;
 DHT myDHT(temperaturePin, DHT11);
@@ -33,7 +32,7 @@ unsigned int prevTempMillis;
 unsigned int prevDoorMillis;
 
 String mac = WiFi.macAddress();
-String mqttUsername = "ESP-" + mac;
+String mqttClientName = "ESP-" + mac;
 
 EspMQTTClient client(
   "Yolo",
@@ -41,48 +40,32 @@ EspMQTTClient client(
   "192.168.1.100",  // MQTT Broker server ip
   "MQTTUsername",   // Can be omitted if not needed
   "MQTTPassword",   // Can be omitted if not needed
-  mqttUsername.c_str(),     // Client name that uniquely identify your device
+  mqttClientName.c_str(),     // Client name that uniquely identify your device
   1883              // The MQTT port, default to 1883. this line can be omitted
 );
 
-void turnOnLight(int pinNumber) {
-  uint8_t pin;
-  switch (pinNumber) {
-    case 1: pin = pinD1;
-      break;
-    case 2: pin = pinD2;
-      break;
-    default: client.publish("global/error", "{\"error\": \"Error: Pin " + String(pinNumber) + " is not available on device: " + WiFi.macAddress() + "\"}");
-  }
+void turnOnLight(String pin) {
   for (int i = 0; i < 1024; i++) {
-    analogWrite(pin, i);
+    analogWrite(PINS[pin], i);
     delay(1);
   }
-  digitalWrite(pin, HIGH);
+  digitalWrite(PINS[pin], HIGH);
 }
 
-void turnOffLight(int pinNumber) {
-  uint8_t pin;
-  switch (pinNumber) {
-    case 1: pin = pinD1;
-      break;
-    case 2: pin = pinD2;
-      break;
-    default: client.publish("global/error", "{\"error\": \"Error: Pin " + String(pinNumber) + " is not available on device: " + WiFi.macAddress() + "\"}");
-  }
+void turnOffLight(String pin) {
   for (int i = 1023; i >= 0; i--) {
-    analogWrite(pin, i);
+    analogWrite(PINS[pin], i);
     delay(1);
   }
-  digitalWrite(pin, LOW);
+  digitalWrite(PINS[pin], LOW);
 }
 
-void turnOnSocket(int pin) {
-  digitalWrite(pin, HIGH);
+void turnOnSocket(String pin) {
+  digitalWrite(PINS[pin], HIGH);
 }
 
-void turnOffSocket(int pin) {
-  digitalWrite(pin, LOW);
+void turnOffSocket(String pin) {
+  digitalWrite(PINS[pin], LOW);
 }
 
 void onConnectionEstablished()
@@ -102,20 +85,24 @@ void onConnectionEstablished()
     String deviceId = doc["deviceId"];
     String attachmentId = doc["attachmentId"];
     String attachmentType = doc["attachmentType"];
-    int pinNumber = doc["pinNumber"];
+    String pin = doc["pin"];
     bool value = doc["value"];
 
+    // Check pin
+    if (PINS[pin] == NULL) client.publish("global/error", "{\"error\": \"Error: Pin " + pin + " is not available on device: " + WiFi.macAddress() + "\"}");
+
+
     if (attachmentType == "light") {
-      client.subscribe("lights/" + deviceId + "/" + pinNumber, [pinNumber](const String & topic, const String & payload) {
-        if (payload == "on") turnOnLight(pinNumber);
-        if (payload == "off") turnOffLight(pinNumber);
+      client.subscribe("lights/" + deviceId + "/" + pin, [pin](const String & topic, const String & payload) {
+        if (payload == "on") turnOnLight(pin);
+        if (payload == "off") turnOffLight(pin);
       });
     }
 
     if (attachmentType == "socket") {
-      client.subscribe("sockets/" + deviceId + "/" + pinNumber, [pinNumber](const String & topic, const String & payload) {
-        if (payload == "on") turnOnSocket(pinNumber);
-        if (payload == "off") turnOffSocket(pinNumber);
+      client.subscribe("sockets/" + deviceId + "/" + pin, [pin](const String & topic, const String & payload) {
+        if (payload == "on") turnOnSocket(pin);
+        if (payload == "off") turnOffSocket(pin);
       });
     }
 
@@ -131,11 +118,10 @@ void onConnectionEstablished()
 
   });
 
-  client.publish("global/deviceState", "{\"macAddress\": \"" + WiFi.macAddress() + "\",\"state\":\"online\"}");
+  client.publish("global/deviceState", "{\"macAddress\": \"" + WiFi.macAddress() + "\",\"ipAddress\":\"" + WiFi.localIP().toString() + "\",\"state\":\"online\"}", true);
 }
 
 void setupOTA() {
-  Serial.println("Booting");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   while (WiFi.waitForConnectResult() != WL_CONNECTED) {
@@ -189,26 +175,43 @@ void setupOTA() {
     }
   });
   ArduinoOTA.begin();
-  Serial.println("Ready");
+  Serial.println("OTA Ready");
   Serial.print("IP address: ");
   Serial.println(WiFi.localIP());
 }
 
 void setup() {
+  PINS["D1"] = D1;
+  PINS["D2"] = D2;
+  //  PINS["D3"] = D3;
+  //  PINS["D4"] = D4;
+
   pinMode(D1, OUTPUT);
   pinMode(D2, OUTPUT);
   pinMode(D3, INPUT_PULLUP);
   pinMode(D4, INPUT_PULLUP);
 
+  digitalWrite(D1, LOW);
+  digitalWrite(D2, LOW);
+  //  digitalWrite(D3, LOW);
+  //  digitalWrite(D4, LOW);
+
   myDHT.begin();
 
   Serial.begin(115200);
-
-  setupOTA();
+  Serial.println("Booting");
 
   client.enableDebuggingMessages();
-  String lastWill = "{\"macAddress\": \"" + mac + "\",\"state\":\"offline\"}";
-  client.enableLastWillMessage("global/deviceState", lastWill.c_str(), true);
+  
+  // Last will
+  char message[100];
+  StaticJsonDocument<128> doc;
+  doc["macAddress"] = mac;
+  doc["state"] = "offline";
+  serializeJson(doc, message);
+  client.enableLastWillMessage("global/deviceState", message, true);
+
+  setupOTA();
 
   pinMode(LED_BUILTIN, OUTPUT);
   for (int i = 0; i < 10; i++) {
@@ -217,6 +220,7 @@ void setup() {
   }
 
   prevTempMillis = prevDoorMillis = millis();
+  Serial.println("All systems GO");
 }
 
 void loop() {
@@ -232,7 +236,7 @@ void loop() {
       float hum = myDHT.readHumidity();
 
       if (isnan(temp) || isnan(hum)) {
-        String message = "{\"error\": \"Error: Error reading DHT temperature\"}";
+        String message = "{\"error\": \"Error reading temperature\", \"values\":[" + String(temp) + "," + String(hum) + "]}";
         Serial.println(message);
         client.publish("global/error", message);
       } else {
