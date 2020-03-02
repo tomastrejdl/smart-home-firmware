@@ -16,7 +16,8 @@
 const char* ssid = STASSID;
 const char* password = STAPSK;
 
-StaticJsonDocument<512> PINS;
+StaticJsonDocument<64> PINS;
+StaticJsonDocument<64> STATE;
 
 int temperaturePin = D4;
 DHT myDHT(temperaturePin, DHT11);
@@ -45,19 +46,25 @@ EspMQTTClient client(
 );
 
 void turnOnLight(String pin) {
-  for (int i = 0; i < 1024; i++) {
-    analogWrite(PINS[pin], i);
-    delay(1);
+  if (STATE[pin] == LOW) {
+    for (int i = 0; i < 1024; i++) {
+      analogWrite(PINS[pin], i);
+      delay(1);
+    }
+    digitalWrite(PINS[pin], HIGH);
+    STATE[pin] = HIGH;
   }
-  digitalWrite(PINS[pin], HIGH);
 }
 
 void turnOffLight(String pin) {
-  for (int i = 1023; i >= 0; i--) {
-    analogWrite(PINS[pin], i);
-    delay(1);
+  if (STATE[pin] == HIGH) {
+    for (int i = 1023; i >= 0; i--) {
+      analogWrite(PINS[pin], i);
+      delay(1);
+    }
+    digitalWrite(PINS[pin], LOW);
+    STATE[pin] = LOW;
   }
-  digitalWrite(PINS[pin], LOW);
 }
 
 void turnOnSocket(String pin) {
@@ -197,6 +204,8 @@ void setup() {
   PINS["D2"] = D2;
   PINS["D3"] = D3;
   PINS["D4"] = D4;
+
+  STATE["D1"] = STATE["D2"] = STATE["D3"] = STATE["D4"] = LOW;
 
   myDHT.begin();
 
