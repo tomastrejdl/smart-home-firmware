@@ -19,8 +19,8 @@
 #include "DHT.h"
 
 #ifndef STASSID
-#define STASSID "Yolo"
-#define STAPSK  "44141158"
+#define STASSID "Yolo"        // Wifi SSID
+#define STAPSK  "44141158"    // Wifi passowrd
 #endif
 
 // Pin definition for Wemos D1 mini
@@ -34,24 +34,26 @@
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 // GLOBAL VARIABLES
 
-StaticJsonDocument<64> PINS;
-StaticJsonDocument<64> STATE;
-bool DOOR_STATE = LOW;
+// 
+StaticJsonDocument<64> PINS;        // Pin mapping from strings ("D1", "D2, ...) to GRPIO numbers (0, 1, 2, ...) on Wemos D1 mini
+StaticJsonDocument<64> STATE;       // State of pins, LOW/HIGH
+bool DOOR_STATE = LOW;              // State of DOOR_PIN, LOW/HIGH
 
-DHT myDHT(TEMPERATURE_PIN, DHT11);
-unsigned int tempInterval = 0;
-String tempAttId;
+DHT myDHT(TEMPERATURE_PIN, DHT11);  // Definition for DHT11 temperature and humidity sensor
+unsigned int tempInterval = 0;      // Interval in milliseconds to check temperature
+String tempAttId;                   // database ID of the teperature sensor Attachment
 
-unsigned int doorInterval = 0;
-bool invertDoor = false;
-String doorAttId;
+unsigned int doorInterval = 0;      // Interval in milliseconds to check door state
+bool invertDoor = false;            // if true invert the door state, e.g., door is open if DOOR_PIN is LOW => door is open if DOOR_PIN is HIGH
+String doorAttId;                   // database ID of the door attachment
 
-unsigned int prevTempMillis;
-unsigned int prevDoorMillis;
+unsigned int prevTempMillis;        // time of previous temperature reading
+unsigned int prevDoorMillis;        // time of previous door state reading
 
 String mac = WiFi.macAddress();
 String mqttClientName = "ESP-" + mac;
 
+// MQTT client definition, args: broker_ip, port, MQTT_Client_Name
 EspMQTTClient client(
   "192.168.1.100",
   1883,
@@ -66,6 +68,7 @@ EspMQTTClient client(
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 // FUNCTIONS
 
+// Turn ON light on selected pin, with 1 second fade in
 void turnOnLight(String pin) {
   if (STATE[pin] == LOW) {
     for (int i = 0; i < 1024; i++) {
@@ -77,6 +80,7 @@ void turnOnLight(String pin) {
   }
 }
 
+// Turn OFF light on selected pin, with 1 second fade out
 void turnOffLight(String pin) {
   if (STATE[pin] == HIGH) {
     for (int i = 1023; i >= 0; i--) {
@@ -88,16 +92,19 @@ void turnOffLight(String pin) {
   }
 }
 
+// Turn ON socket on selected pin
 void turnOnSocket(String pin) {
   STATE[pin] = HIGH;
   digitalWrite(PINS[pin], STATE[pin]);
 }
 
+// Turn OFF socket on selected pin
 void turnOffSocket(String pin) {
   STATE[pin] = HIGH;
   digitalWrite(PINS[pin], STATE[pin]);
 }
 
+// Blink led on pin pinNum 5 times, duration 1 second
 void blinkLed(uint8_t pinNum) {
   pinMode(pinNum, OUTPUT);
   for (int i = 0; i <= 10; i++) {
@@ -112,6 +119,7 @@ void blinkLed(uint8_t pinNum) {
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 // MQTT
 
+// Subscribe to MQTT topic for Lights, and change light ON/OFF state based on received messages
 void handleLight(String deviceId, String pin) {
   pinMode(PINS[pin], OUTPUT);
   turnOffLight(pin);
@@ -121,6 +129,7 @@ void handleLight(String deviceId, String pin) {
   });
 }
 
+// Subscribe to MQTT topic for Sockets, and change socket ON/OFF state based on received messages
 void handleSocket(String deviceId, String pin) {
   pinMode(PINS[pin], OUTPUT);
   turnOffSocket(pin);
@@ -130,12 +139,15 @@ void handleSocket(String deviceId, String pin) {
   });
 }
 
+
+// Register Temperature Sensor Attachment ID and start reading temperature from TEMPERATURE_PIN in defined interval tempI
 void handleTemperatureSensor(String attachmentId, int tempI) {
   tempAttId = attachmentId;
   tempInterval = tempI;
   pinMode(TEMPERATURE_PIN, INPUT_PULLUP);
 }
 
+// Register Door Sensor Attachment ID and start reading door state from DOOR_PIN in defined interval doorI
 void handleDoorSensor(String attachmentId, int doorI, bool invert) {
   doorAttId = attachmentId;
   doorInterval = doorI;
@@ -143,20 +155,24 @@ void handleDoorSensor(String attachmentId, int doorI, bool invert) {
   pinMode(DOOR_PIN, INPUT_PULLUP);
 }
 
+// This functions is called by the EspMQTTClient library once the connection the the broker is established
 void onConnectionEstablished()
 {
+  // Subscribe to global device discovery MQTT topic, send information about this device to topic "global/discoveryResponse" when a message is received to "global/discovery" topic 
   client.subscribe("global/discovery", [](const String & topic, const String & payload) {
     client.publish("global/discoveryResponse", "{\"deviceType\": \"ESP8266\",\"macAddress\": \"" + WiFi.macAddress() + "\"}");
   });
 
+  // Subsribe to device specific MQTT topic, this topic receives configuration messages intended to configure this device's pins and functions
   client.subscribe("device/" + WiFi.macAddress(), [](const String & topic, const String & payload) {
     // Parse payload
     StaticJsonDocument<512> doc;
     deserializeJson(doc, payload);
 
-    // Potencially Unsubscribe from old topics here
+    // Unsubscribe from old topics
 
     // Subscribe to new topics
+    // Parse incomming JSON
     String deviceId = doc["deviceId"];
     String attachmentId = doc["attachmentId"];
     String attachmentType = doc["attachmentType"];
@@ -165,18 +181,20 @@ void onConnectionEstablished()
     int sampleInterval = doc["sampleInterval"];
     bool invert = doc["invert"];
 
-    // Check pin
+    // Check if pin exists
     if (pinNum == NULL & pinStr != "D3") {    // Because pin "D3" is GPIO 0, e.g., 0 == NULL evaluates to true, and the Json library return 0 for non defined pins as well ...
       client.publish("global/error", "{\"error\": \"Error: Pin " + pinStr + " is not available on device: " + WiFi.macAddress() + "\"}");
       return;
     }
 
+    // handle different attachment types
     if (attachmentType == "light") handleLight(deviceId, pinStr);
     if (attachmentType == "socket") handleSocket(deviceId, pinStr);
     if (attachmentType == "temperature-sensor") handleTemperatureSensor(attachmentId, sampleInterval);
     if (attachmentType == "door-sensor") handleDoorSensor(attachmentId, sampleInterval, invert);
   });
 
+  // Send a status message to "global/deviceState" MQTT topic on startup and every time a message is received to "global/reportOnlineState" topic
   String isOnlineMessage = "{\"macAddress\": \"" + WiFi.macAddress() + "\",\"ipAddress\":\"" + WiFi.localIP().toString() + "\",\"isOnline\":true}";
   client.subscribe("global/reportOnlineState", [isOnlineMessage](const String & topic, const String & payload) {
     client.publish("global/deviceState", isOnlineMessage, true);
@@ -191,6 +209,7 @@ void onConnectionEstablished()
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 // OTA
 
+// Setup for Over the Air update (OTA) taken from official ESP8266 Arduino examples
 void setupOTA() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(STASSID, STAPSK);
@@ -257,13 +276,25 @@ void setupOTA() {
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 //SETUP
 
+// Set all pins to their default states, e.g. Lights and Sockets OFF (LOW)
+void pinsToDefault() {
+  pinMode(PINS["D1"], OUTPUT);
+  pinMode(PINS["D2"], OUTPUT);
+  pinMode(PINS["D3"], OUTPUT);
+  pinMode(PINS["D4"], OUTPUT);
+  digitalWrite(PINS["D1"], LOW);
+  digitalWrite(PINS["D2"], LOW);
+  digitalWrite(PINS["D3"], LOW);
+  digitalWrite(PINS["D4"], LOW);
+  STATE["D1"] = STATE["D2"] = STATE["D3"] = STATE["D4"] = LOW;
+}
+
+// This code runs once on statup
 void setup() {
   PINS["D1"] = D1;
   PINS["D2"] = D2;
   PINS["D3"] = D3;
   PINS["D4"] = D4;
-
-  STATE["D1"] = STATE["D2"] = STATE["D3"] = STATE["D4"] = LOW;
 
   myDHT.begin();
 
@@ -272,7 +303,7 @@ void setup() {
 
   client.enableDebuggingMessages();
 
-  // MQTT Last will
+  // MQTT Last will, used for detecting that a device has gone offline
   char message[100];
   StaticJsonDocument<128> doc;
   doc["macAddress"] = mac;
@@ -285,6 +316,9 @@ void setup() {
   prevTempMillis = prevDoorMillis = millis();
 
   blinkLed(LED_BUILTIN);
+
+  pinsToDefault();
+
   Serial.println("All systems GO");
 }
 
@@ -295,6 +329,7 @@ void setup() {
 // ---------------------------------------------------------------------------------------------------------------------------------------------------
 // LOOP
 
+// Check conditions for reading temperature (the Attachment ID is defined, and interval is greater than 0), read data (temperature + humidity) and send over MQTT to topic "global/temprerature"
 void loopTemperatureSensor() {
   unsigned int currentMillis = millis();
 
@@ -320,6 +355,7 @@ void loopTemperatureSensor() {
   }
 }
 
+// Check conditions for reading temperature (the Attachment ID is defined, and interval is greater than 0), read door state (open/closed) and send over MQTT to topic "global/door"
 void loopDoorSensor() {
   unsigned int currentMillis = millis();
 
@@ -328,19 +364,21 @@ void loopDoorSensor() {
     DOOR_STATE = (bool)digitalRead(DOOR_PIN);
     if (DOOR_STATE != prevDoorState) {
       bool realDoorState = DOOR_STATE;
-      if(invertDoor) realDoorState = !realDoorState;
+      if (invertDoor) realDoorState = !realDoorState;
 
       String isOpen;
-      if(realDoorState == HIGH) isOpen = "false";
+      if (realDoorState == HIGH) isOpen = "false";
       else isOpen = "true";
-      
+
       client.publish("global/door", "{\"attachmentId\":\"" + doorAttId + "\",\"isOpen\":" + isOpen + "}");
     }
     prevDoorMillis = currentMillis;
   }
 }
 
-void loop() {
+
+// Classis Arduino loop, runs repetedly, like while(true) {...}
+void loop(){
   ArduinoOTA.handle();
   client.loop();
 
