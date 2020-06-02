@@ -14,18 +14,33 @@
 #include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
+
+// For web interface
+#include <DNSServer.h>
+#include <ESP8266WebServer.h>
+#include <WiFiManager.h>         // https://github.com/tomastrejdl/WiFiManager
+
 #include "EspMQTTClient.h"
-#include <ArduinoJson.h>
+#include "ArduinoJson.h"
 #include "DHT.h"
 
-#ifndef STASSID
-#define STASSID "Yolo"        // Wifi SSID
-#define STAPSK  "44141158"    // Wifi passowrd
+
+// DON'T FORGET TO CHANGE BOARD IN ARDUINO WHEN UPLOADING !!!
+// Board types
+//#define WEMOSD1MINI         // uncomment when uploading to Wemos D1 Mini
+#define ESP01_TEMP               // uncomment when uploading to ESP-01 with a Temperature sensor attached to GPIO2
+
+#ifdef WEMOSD1MINI
+  // Pin definition for Wemos D1 mini
+  #define TEMPERATURE_PIN D3
+  #define DOOR_PIN D4
 #endif
 
-// Pin definition for Wemos D1 mini
-#define TEMPERATURE_PIN D3
-#define DOOR_PIN D4
+#ifdef ESP01_TEMP
+  // Pin definition for ESP-01
+  #define TEMPERATURE_PIN 2
+  #define DOOR_PIN 0
+#endif
 
 
 
@@ -55,7 +70,7 @@ String mqttClientName = "ESP-" + mac;
 
 // MQTT client definition, args: broker_ip, port, MQTT_Client_Name
 EspMQTTClient client(
-  "192.168.1.100",
+  "smarthome.local",
   1883,
   mqttClientName.c_str()
 );
@@ -211,13 +226,13 @@ void onConnectionEstablished()
 
 // Setup for Over the Air update (OTA) taken from official ESP8266 Arduino examples
 void setupOTA() {
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(STASSID, STAPSK);
-  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    Serial.println("Connection Failed! Rebooting...");
-    delay(5000);
-    ESP.restart();
-  }
+//  WiFi.mode(WIFI_STA);
+//  WiFi.begin(STASSID, STAPSK);
+//  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
+//    Serial.println("Connection Failed! Rebooting...");
+//    delay(5000);
+//    ESP.restart();
+//  }
 
   // Port defaults to 8266
   // ArduinoOTA.setPort(8266);
@@ -265,8 +280,8 @@ void setupOTA() {
   });
   ArduinoOTA.begin();
   Serial.println("OTA Ready");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+//  Serial.print("IP address: ");
+//  Serial.println(WiFi.localIP());
 }
 
 
@@ -278,28 +293,48 @@ void setupOTA() {
 
 // Set all pins to their default states, e.g. Lights and Sockets OFF (LOW)
 void pinsToDefault() {
-  pinMode(PINS["D1"], OUTPUT);
-  pinMode(PINS["D2"], OUTPUT);
-  pinMode(PINS["D3"], OUTPUT);
-  pinMode(PINS["D4"], OUTPUT);
-  digitalWrite(PINS["D1"], LOW);
-  digitalWrite(PINS["D2"], LOW);
-  digitalWrite(PINS["D3"], LOW);
-  digitalWrite(PINS["D4"], LOW);
-  STATE["D1"] = STATE["D2"] = STATE["D3"] = STATE["D4"] = LOW;
+  #ifdef WEMOSD1MINI
+    pinMode(PINS["D1"], OUTPUT);
+    pinMode(PINS["D2"], OUTPUT);
+    pinMode(PINS["D3"], OUTPUT);
+    pinMode(PINS["D4"], OUTPUT);
+    digitalWrite(PINS["D1"], LOW);
+    digitalWrite(PINS["D2"], LOW);
+    digitalWrite(PINS["D3"], LOW);
+    digitalWrite(PINS["D4"], LOW);
+    STATE["D1"] = STATE["D2"] = STATE["D3"] = STATE["D4"] = LOW;
+  #endif
+
+  #ifdef ESP01_TEMP
+    pinMode(PINS["D3"], OUTPUT);
+    digitalWrite(PINS["D3"], LOW);
+    STATE["D3"] = LOW;
+  #endif
 }
 
 // This code runs once on statup
 void setup() {
-  PINS["D1"] = D1;
-  PINS["D2"] = D2;
-  PINS["D3"] = D3;
-  PINS["D4"] = D4;
+  #ifdef WEMOSD1MINI
+    PINS["D1"] = D1;
+    PINS["D2"] = D2;
+    PINS["D3"] = D3;
+    PINS["D4"] = D4;
+  #endif
+
+  #ifdef ESP01_TEMP
+      PINS["D3"] = 2;
+  #endif
+  
 
   myDHT.begin();
 
   Serial.begin(115200);
   Serial.println("Booting");
+
+  // Wifi manager, for web interface to enter SSID and password to WiFi
+  WiFiManager wifiManager;
+  int result = wifiManager.autoConnect();
+  Serial.println("WiFiManager result: " + result);
 
   client.enableDebuggingMessages();
 
@@ -315,9 +350,9 @@ void setup() {
 
   prevTempMillis = prevDoorMillis = millis();
 
-  blinkLed(LED_BUILTIN);
-
   pinsToDefault();
+
+  blinkLed(LED_BUILTIN);
 
   Serial.println("All systems GO");
 }
@@ -377,7 +412,7 @@ void loopDoorSensor() {
 }
 
 
-// Classis Arduino loop, runs repetedly, like while(true) {...}
+// Classic Arduino loop, runs repetedly, like while(true) {...}
 void loop(){
   ArduinoOTA.handle();
   client.loop();
