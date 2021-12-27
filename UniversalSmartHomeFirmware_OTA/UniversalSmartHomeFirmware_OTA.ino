@@ -27,8 +27,8 @@
 
 // DON'T FORGET TO CHANGE BOARD IN ARDUINO WHEN UPLOADING !!!
 // Board types
-//#define WEMOSD1MINI         // uncomment when uploading to Wemos D1 Mini
-#define ESP01_TEMP               // uncomment when uploading to ESP-01 with a Temperature sensor attached to GPIO2
+#define WEMOSD1MINI         // uncomment when uploading to Wemos D1 Mini
+//#define ESP01_TEMP               // uncomment when uploading to ESP-01 with a Temperature sensor attached to GPIO2
 
 #ifdef WEMOSD1MINI
   // Pin definition for Wemos D1 mini
@@ -314,6 +314,7 @@ void pinsToDefault() {
 
 // This code runs once on statup
 void setup() {
+  WiFi.disconnect();
   #ifdef WEMOSD1MINI
     PINS["D1"] = D1;
     PINS["D2"] = D2;
